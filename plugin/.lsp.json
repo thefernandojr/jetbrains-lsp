@@ -1,0 +1,16 @@
+{
+  "intellij": {
+    "command": "${CLAUDE_PLUGIN_ROOT}/launch",
+    "extensionToLanguage": {
+      ".java": "java",
+      ".kt": "kotlin",
+      ".kts": "kotlin"
+    },
+    "env": {
+      "JAVA_HOME": "__JAVA_HOME__"
+    },
+    "initializationOptions": {
+      "defaultSdk": "__JAVA_HOME__"
+    }
+  }
+}

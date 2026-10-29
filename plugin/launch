@@ -1,0 +1,24 @@
+#!/bin/bash
+set -euo pipefail
+
+SERVER="__SERVER__"
+EULA="$(dirname "$(dirname "$SERVER")")/EULA.txt"
+PROJECT="${CLAUDE_PROJECT_DIR:-$PWD}"
+KEY="$(printf '%s' "$PROJECT" | shasum -a 256 | cut -c1-16)"
+CACHE="$HOME/.cache/intellij-server/claude"
+
+unset IJ_LAUNCHER_DEBUG
+
+for slot in 1 2 3 4 5 6 7 8; do
+  dir="$CACHE/$KEY"
+  [ "$slot" -gt 1 ] && dir="$dir-$slot"
+  owner="$(cat "$dir/claude.pid" 2>/dev/null || true)"
+  if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
+    mkdir -p "$dir"
+    echo "$$" > "$dir/claude.pid"
+    exec "$SERVER" --stdio --system-path "$dir" --eula "$(shasum -a 256 "$EULA" | cut -c1-16)"
+  fi
+done
+
+echo "intellij-server: all cache slots for $PROJECT are in use" >&2
+exit 1

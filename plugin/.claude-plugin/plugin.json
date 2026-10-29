@@ -1,0 +1,9 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "intellij-lsp",
+  "version": "0.1.0",
+  "description": "IntelliJ IDEA Java/Kotlin language server (headless)",
+  "author": {
+    "name": "thefernandojr"
+  }
+}
