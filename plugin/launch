@@ -9,6 +9,12 @@ CACHE="$HOME/.cache/intellij-server/claude"
 
 unset IJ_LAUNCHER_DEBUG
 
+for dir in "$CACHE"/*/; do
+  [ -n "$(find "$dir/claude.pid" -mtime +14 2>/dev/null)" ] || continue
+  kill -0 "$(cat "$dir/claude.pid")" 2>/dev/null && continue
+  rm -rf "$dir"
+done > /dev/null 2>&1 &
+
 for slot in 1 2 3 4 5 6 7 8; do
   dir="$CACHE/$KEY"
   [ "$slot" -gt 1 ] && dir="$dir-$slot"

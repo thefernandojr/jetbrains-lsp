@@ -10,13 +10,13 @@ Needs a JDK (`JAVA_HOME` or `java` on `PATH`) and an IntelliJ IDEA Ultimate lice
 
 Downloads and verifies the server bundle, asks you to accept its EULA, signs you in to a JetBrains Account if the machine has no license, and writes the plugin. Restart Claude Code afterwards.
 
-Each project gets its own index under `~/.cache/intellij-server/claude/`. A second Claude Code session on the same project gets a second index, because the server locks its index.
+Each project gets its own index under `~/.cache/intellij-server/claude/`. A second Claude Code session on the same project gets a second index, because the server locks its index. Indexes unused for 14 days are deleted when the server starts.
 
 ## Uninstall
 
     ./uninstall.sh
 
-Stops running servers, deactivates the machine's server license (`license reset`, without signing out of your JetBrains Account), and removes:
+Stops running servers, deactivates the machine's server license and signs this machine out of your JetBrains Account (`license reset --account`, which also signs out any JetBrains IDE installed here), and removes:
 
 - `~/.claude/skills/intellij-lsp`
 - `~/.local/share/intellij-server`

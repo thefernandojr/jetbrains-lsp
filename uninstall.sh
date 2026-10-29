@@ -10,7 +10,7 @@ pkill -f "$SHARE/" 2>/dev/null || true
 
 for server in "$SHARE"/*/bin/intellij-server; do
   if [ -x "$server" ]; then
-    "$server" license reset || true
+    "$server" license reset --account || true
     break
   fi
 done
