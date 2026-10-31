@@ -12,6 +12,8 @@ Downloads and verifies the server bundle, asks you to accept its EULA, signs you
 
 All Claude Code sessions share one server, which starts with the first session and stops after 10 minutes with none. Each project or worktree gets its own index under `~/.cache/intellij-server/claude/`. The first session in a new one builds that index in a separate process that exits when done, so the shared server never holds the memory peak of first-time indexing. Indexes unused for 14 days are deleted when a session starts.
 
+The shared server logs to `~/.cache/intellij-server/claude/server/system/log/intellij-server.log`, and first-time indexing to `system/log/` inside that project's index folder. Grep for `LspClient` (sessions connecting and disconnecting), `Updated N files` (a warm index opened) and `Rejecting connection` (something other than an LSP client connected).
+
 ## Uninstall
 
     ./uninstall.sh
