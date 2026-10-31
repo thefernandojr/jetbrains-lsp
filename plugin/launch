@@ -1,30 +1,182 @@
-#!/bin/bash
-set -euo pipefail
+#!/usr/bin/env python3
+import fcntl
+import hashlib
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 
-SERVER="__SERVER__"
-EULA="$(dirname "$(dirname "$SERVER")")/EULA.txt"
-PROJECT="${CLAUDE_PROJECT_DIR:-$PWD}"
-KEY="$(printf '%s' "$PROJECT" | shasum -a 256 | cut -c1-16)"
-CACHE="$HOME/.cache/intellij-server/claude"
+SERVER = "__SERVER__"
+EULA = hashlib.sha256((Path(SERVER).parents[1] / "EULA.txt").read_bytes()).hexdigest()[:16]
+CACHE = Path.home() / ".cache/intellij-server/claude"
+SHARED = CACHE / "server"
+PORT_FILE = SHARED / "port"
+IDLE_TIMEOUT = 600
+PRUNE_AFTER = 14 * 86400
 
-unset IJ_LAUNCHER_DEBUG
+os.environ.pop("IJ_LAUNCHER_DEBUG", None)
 
-for dir in "$CACHE"/*/; do
-  [ -n "$(find "$dir/claude.pid" -mtime +14 2>/dev/null)" ] || continue
-  kill -0 "$(cat "$dir/claude.pid")" 2>/dev/null && continue
-  rm -rf "$dir"
-done > /dev/null 2>&1 &
 
-for slot in 1 2 3 4 5 6 7 8; do
-  dir="$CACHE/$KEY"
-  [ "$slot" -gt 1 ] && dir="$dir-$slot"
-  owner="$(cat "$dir/claude.pid" 2>/dev/null || true)"
-  if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
-    mkdir -p "$dir"
-    echo "$$" > "$dir/claude.pid"
-    exec "$SERVER" --stdio --system-path "$dir" --eula "$(shasum -a 256 "$EULA" | cut -c1-16)"
-  fi
-done
+def read_message(stream):
+    headers = {}
+    while True:
+        line = stream.readline()
+        if not line:
+            return None
+        line = line.strip()
+        if not line:
+            break
+        key, value = line.decode().split(":", 1)
+        headers[key.lower()] = value.strip()
+    return json.loads(stream.read(int(headers["content-length"])))
 
-echo "intellij-server: all cache slots for $PROJECT are in use" >&2
-exit 1
+
+def write_message(write, message):
+    body = json.dumps(message).encode()
+    write(b"Content-Length: %d\r\n\r\n%s" % (len(body), body))
+
+
+def prune():
+    for index in CACHE.iterdir():
+        used = index / "used"
+        if index == SHARED or not used.exists() or time.time() - used.stat().st_mtime < PRUNE_AFTER:
+            continue
+        with open(used) as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                continue
+            shutil.rmtree(index, ignore_errors=True)
+
+
+def warm_up(initialize, index):
+    with open(index / "warmup.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if (index / "ready").exists():
+            return
+        proc = subprocess.Popen(
+            [SERVER, "--stdio", "--system-path", str(index), "--eula", EULA],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=index,
+        )
+
+        def send(message):
+            write_message(proc.stdin.write, {"jsonrpc": "2.0", **message})
+            proc.stdin.flush()
+
+        send(initialize)
+        while (message := read_message(proc.stdout)) is not None:
+            if message.get("id") == initialize["id"] and "method" not in message:
+                send({"method": "initialized", "params": {}})
+            elif "method" in message and "id" in message:
+                send({"id": message["id"], "result": None})
+            elif message.get("method") == "intellij/ready-for-test":
+                (index / "ready").touch()
+                send({"id": "warmup-shutdown", "method": "shutdown"})
+                send({"method": "exit"})
+                break
+        try:
+            proc.wait(30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def connect():
+    try:
+        return socket.create_connection(("127.0.0.1", int(PORT_FILE.read_text())))
+    except (OSError, ValueError):
+        return None
+
+
+def shared_server():
+    with open(SHARED / "start.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if sock := connect():
+            return sock
+        PORT_FILE.unlink(missing_ok=True)
+        proc = subprocess.Popen(
+            [sys.executable, __file__, "serve"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=SHARED, start_new_session=True,
+        )
+        deadline = time.time() + 120
+        while proc.poll() is None and time.time() < deadline:
+            if sock := connect():
+                return sock
+            time.sleep(0.2)
+    sys.exit(f"intellij-server: shared server did not start (exit code {proc.poll()})")
+
+
+def serve():
+    with open(SHARED / "clients", "a") as clients:
+        server = subprocess.Popen(
+            [SERVER, "--multi-client", "--socket", "127.0.0.1:0", "--port-file", str(PORT_FILE),
+             "--system-path", str(SHARED), "--eula", EULA],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=SHARED,
+        )
+        idle_since = time.time()
+        while server.poll() is None:
+            time.sleep(10)
+            try:
+                fcntl.flock(clients, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                idle_since = time.time()
+                continue
+            if time.time() - idle_since >= IDLE_TIMEOUT:
+                server.terminate()
+                try:
+                    server.wait(30)
+                except subprocess.TimeoutExpired:
+                    server.kill()
+                PORT_FILE.unlink(missing_ok=True)
+                return
+            fcntl.flock(clients, fcntl.LOCK_UN)
+
+
+def main():
+    stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
+    initialize = read_message(stdin)
+    if initialize is None:
+        return
+    params = initialize.setdefault("params", {})
+    uri = params.get("rootUri") or next(iter(params.get("workspaceFolders") or []), {}).get("uri")
+    project = unquote(urlparse(uri).path) if uri else os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+
+    CACHE.mkdir(parents=True, exist_ok=True)
+    prune()
+    index = CACHE / hashlib.sha256(project.encode()).hexdigest()[:16]
+    index.mkdir(exist_ok=True)
+    used = open(index / "used", "a")
+    fcntl.flock(used, fcntl.LOCK_SH)
+    os.utime(used.name)
+
+    SHARED.mkdir(exist_ok=True)
+    clients = open(SHARED / "clients", "a")
+    fcntl.flock(clients, fcntl.LOCK_SH)
+
+    params["initializationOptions"] = {**(params.get("initializationOptions") or {}), "indexDir": str(index)}
+    warm_up(initialize, index)
+    sock = shared_server()
+
+    def server_to_client():
+        while data := sock.recv(65536):
+            stdout.write(data)
+            stdout.flush()
+        os._exit(0)
+
+    reader = threading.Thread(target=server_to_client, daemon=True)
+    reader.start()
+    write_message(sock.sendall, initialize)
+    while data := stdin.read1(65536):
+        sock.sendall(data)
+    sock.shutdown(socket.SHUT_WR)
+    reader.join(10)
+
+
+if __name__ == "__main__":
+    serve() if sys.argv[1:] == ["serve"] else main()

@@ -2,7 +2,7 @@
 
 Runs JetBrains' `intellij-server` (IntelliJ IDEA's Java and Kotlin engine over LSP) as a Claude Code language server, through a local plugin at `~/.claude/skills/intellij-lsp`.
 
-Needs a JDK (`JAVA_HOME` or `java` on `PATH`) and an IntelliJ IDEA Ultimate license after the 30-day trial.
+Needs a JDK (`JAVA_HOME` or `java` on `PATH`), `python3`, and an IntelliJ IDEA Ultimate license after the 30-day trial.
 
 ## Install
 
@@ -10,7 +10,7 @@ Needs a JDK (`JAVA_HOME` or `java` on `PATH`) and an IntelliJ IDEA Ultimate lice
 
 Downloads and verifies the server bundle, asks you to accept its EULA, signs you in to a JetBrains Account if the machine has no license, and writes the plugin. Restart Claude Code afterwards.
 
-Each project gets its own index under `~/.cache/intellij-server/claude/`. A second Claude Code session on the same project gets a second index, because the server locks its index. Indexes unused for 14 days are deleted when the server starts.
+All Claude Code sessions share one server, which starts with the first session and stops after 10 minutes with none. Each project or worktree gets its own index under `~/.cache/intellij-server/claude/`. The first session in a new one builds that index in a separate process that exits when done, so the shared server never holds the memory peak of first-time indexing. Indexes unused for 14 days are deleted when a session starts.
 
 ## Uninstall
 

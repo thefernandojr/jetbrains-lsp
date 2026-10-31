@@ -1,6 +1,7 @@
 {
   "intellij": {
     "command": "${CLAUDE_PLUGIN_ROOT}/launch",
+    "startupTimeout": 600000,
     "extensionToLanguage": {
       ".java": "java",
       ".kt": "kotlin",
